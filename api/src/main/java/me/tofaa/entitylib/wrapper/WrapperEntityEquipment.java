@@ -5,6 +5,7 @@ import com.github.retrooper.packetevents.protocol.item.ItemStack;
 import com.github.retrooper.packetevents.protocol.player.Equipment;
 import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEquipment;
+import me.tofaa.entitylib.EntityLib;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -21,8 +22,7 @@ public class WrapperEntityEquipment {
     private final WrapperLivingEntity entity;
     private boolean notifyChanges = true;
 
-    // 0 = main hand, 1 = offhand, 2 = boots, 3 = leggings, 4 = chestplate, 5 = helmet
-    private final ItemStack[] equipment = new ItemStack[6];
+    private final ItemStack[] equipment = new ItemStack[EQUIPMENT_SLOTS.length];
 
     public WrapperEntityEquipment(WrapperLivingEntity entity) {
         this.entity = entity;
@@ -41,37 +41,31 @@ public class WrapperEntityEquipment {
     }
 
     public void setHelmet(@Nullable ItemStack itemStack) {
-        equipment[5] = itemStack == null ? ItemStack.EMPTY : itemStack;
-        refresh();
+        setItem(EquipmentSlot.HELMET, itemStack);
     }
 
     public void setChestplate(@Nullable ItemStack itemStack) {
-        equipment[4] = itemStack == null ? ItemStack.EMPTY : itemStack;
-        refresh();
+        setItem(EquipmentSlot.CHEST_PLATE, itemStack);
     }
 
     public void setLeggings(@Nullable ItemStack itemStack) {
-        equipment[3] = itemStack == null ? ItemStack.EMPTY : itemStack;
-        refresh();
+        setItem(EquipmentSlot.LEGGINGS, itemStack);
     }
 
     public void setBoots(@Nullable ItemStack itemStack) {
-        equipment[2] = itemStack == null ? ItemStack.EMPTY : itemStack;
-        refresh();
+        setItem(EquipmentSlot.BOOTS, itemStack);
     }
 
     public void setMainHand(@Nullable ItemStack itemStack) {
-        equipment[0] = itemStack == null ? ItemStack.EMPTY : itemStack;
-        refresh();
+        setItem(EquipmentSlot.MAIN_HAND, itemStack);
     }
 
     public void setOffhand(@Nullable ItemStack itemStack) {
-        equipment[1] = itemStack == null ? ItemStack.EMPTY : itemStack;
-        refresh();
+        setItem(EquipmentSlot.OFF_HAND, itemStack);
     }
 
     public void setItem(@NotNull EquipmentSlot slot, @Nullable ItemStack itemStack) {
-        equipment[slot.ordinal()]  = itemStack == null ? ItemStack.EMPTY : itemStack;
+        equipment[slot.ordinal()] = itemStack == null ? ItemStack.EMPTY : itemStack;
         refresh();
     }
 
@@ -108,11 +102,45 @@ public class WrapperEntityEquipment {
         return getItem(EquipmentSlot.OFF_HAND);
     }
 
+    /**
+     * Whether the running server version knows the given equipment slot.
+     *
+     * @param slot the slot to check
+     * @return true when the slot can be sent to a client of the server version
+     */
+    public static boolean isSlotSupported(@NotNull EquipmentSlot slot) {
+        return isSlotSupported(slot, EntityLib.getApi().getPacketEvents().getServerManager().getVersion());
+    }
+
+    /**
+     * Whether the given server version knows the given equipment slot.
+     * A slot travels in the equipment packet as its ordinal, so a slot that the version does not
+     * have yet has no number a client of that version could map back to it.
+     *
+     * @param slot    the slot to check
+     * @param version the server version to check the slot against
+     * @return true when the slot can be sent to a client of that version
+     */
+    public static boolean isSlotSupported(@NotNull EquipmentSlot slot, @NotNull ServerVersion version) {
+        switch (slot) {
+            case OFF_HAND:
+                return version.isNewerThanOrEquals(ServerVersion.V_1_9);
+            case BODY:
+                return version.isNewerThanOrEquals(ServerVersion.V_1_20_5);
+            case SADDLE:
+                return version.isNewerThanOrEquals(ServerVersion.V_1_21_5);
+            default:
+                return true;
+        }
+    }
+
     public WrapperPlayServerEntityEquipment createPacket() {
-        List<Equipment> equipment = new ArrayList<>();
+        ServerVersion version = EntityLib.getApi().getPacketEvents().getServerManager().getVersion();
+        List<Equipment> equipment = new ArrayList<>(this.equipment.length);
         for (int i = 0; i < this.equipment.length; i++) {
-            ItemStack itemStack = this.equipment[i];
-            equipment.add(new Equipment(EQUIPMENT_SLOTS[i], itemStack));
+            EquipmentSlot slot = EQUIPMENT_SLOTS[i];
+            if (!isSlotSupported(slot, version)) continue;
+            equipment.add(new Equipment(slot, this.equipment[i]));
         }
         return new WrapperPlayServerEntityEquipment(
                 entity.getEntityId(),
