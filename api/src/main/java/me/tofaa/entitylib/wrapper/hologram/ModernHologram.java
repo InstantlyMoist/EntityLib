@@ -10,7 +10,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -102,6 +105,13 @@ final class ModernHologram implements Hologram.Modern {
         int existingCount = lines.size();
         int newCount = newLines.size();
 
+        // Lines added later must be shown to whoever is already watching: a fresh WrapperEntity
+        // has no viewers of its own, so spawning it reaches nobody and those lines stay invisible
+        // to every current viewer.
+        Set<UUID> inheritedViewers = existingCount > 0
+            ? new HashSet<UUID>(lines.get(0).getViewers())
+            : Collections.<UUID>emptySet();
+
         if (newCount == 0) {
             for (WrapperEntity line : lines) {
                 line.remove();
@@ -134,6 +144,9 @@ final class ModernHologram implements Hologram.Modern {
             if (spawned) {
                 e.spawn(location);
             }
+            for (UUID viewer : inheritedViewers) {
+                e.addViewer(viewer);
+            }
             lines.add(e);
         }
 
@@ -163,10 +176,18 @@ final class ModernHologram implements Hologram.Modern {
         if (this.modifier != null) {
             this.modifier.accept(meta);
         }
+        // Inherit the existing lines' viewers, otherwise this line is only ever visible to
+        // players who start watching after it was created.
+        Set<UUID> inheritedViewers = lines.isEmpty()
+            ? Collections.<UUID>emptySet()
+            : new HashSet<UUID>(lines.get(0).getViewers());
         Check.arrayLength(lines, index, e);
         if (spawned) {
             e.spawn(location);
             teleport(location);
+        }
+        for (UUID viewer : inheritedViewers) {
+            e.addViewer(viewer);
         }
     }
 

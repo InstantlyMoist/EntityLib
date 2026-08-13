@@ -40,6 +40,7 @@ public class NPCMovement {
                     () -> {
                         engine.tick();
                         processPathFollowing();
+                        processHologramFollow();
                     },
                     1L,
                     1L
@@ -83,6 +84,36 @@ public class NPCMovement {
         activeFollowers.clear();
     }
 
+    /**
+     * Keeps every NPC's hologram sitting on its NPC, every tick.
+     * <p>
+     * This used to live in {@link #processViewerSync()}, which only runs every 10 ticks — so a
+     * walking NPC left its name tag behind and the tag visibly snapped back twice a second. The
+     * move is skipped entirely when the NPC hasn't changed position, so idle NPCs cost nothing
+     * and rotation alone never re-sends packets (name tags always face the viewer anyway).
+     */
+    private static void processHologramFollow() {
+        for (NPC npc : NPCRegistry.getAll()) {
+            if (!npc.isSpawned() || !npc.getEntity().isPresent()) continue;
+
+            Location npcLoc = npc.getEntity().get().getLocation();
+            double yOff = npc.getOptions().isSitting() ? 1.1 : 1.0;
+
+            npc.getHologram().ifPresent(hologram -> {
+                Location current = hologram.getLocation();
+                double targetY = npcLoc.getY() + yOff;
+                if (current != null
+                    && current.getX() == npcLoc.getX()
+                    && current.getY() == targetY
+                    && current.getZ() == npcLoc.getZ()) {
+                    return;
+                }
+                hologram.teleport(new Location(
+                    npcLoc.getX(), targetY, npcLoc.getZ(), npcLoc.getYaw(), npcLoc.getPitch()));
+            });
+        }
+    }
+
     private static void processViewerSync() {
         for (NPC npc : NPCRegistry.getAll()) {
             if (!npc.isSpawned() || !npc.getEntity().isPresent()) continue;
@@ -93,13 +124,8 @@ public class NPCMovement {
 
             Location npcLocation = entity.getLocation();
 
-            npc.getHologram().ifPresent(hologram -> {
-                boolean isSittingNow = npc.getOptions().isSitting();
-                double yOff = isSittingNow ? 1.1 : 1.0;
-                Location npcLoc = npc.getEntity().get().getLocation();
-                hologram.teleport(new Location(npcLoc.getX(), npcLoc.getY() + yOff, npcLoc.getZ(), npcLoc.getYaw(), npcLoc.getPitch()));
-            });
-
+            // Following the NPC is handled every tick by processHologramFollow(); this task only
+            // decides who can see it.
             boolean permanentlyVisible = npc.getOptions().isPermanentlyVisible();
             double viewDistance = npc.getOptions().getViewDistance();
             boolean isSitting = npc.getSittingEntity().isPresent();

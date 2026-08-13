@@ -3,6 +3,7 @@ package me.tofaa.entitylib.npc.interactions;
 import me.tofaa.entitylib.npc.NPC;
 import me.tofaa.entitylib.npc.NPCOptions;
 import me.tofaa.entitylib.npc.SpaceNPC;
+import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
@@ -57,7 +58,8 @@ public class InteractionHandler {
                     player.chat(value.replace("%player%", player.getName()).replace("%npc%", npc.getId()));
                 });
             } else if (InteractionAction.MESSAGE.equals(actionType)) {
-                player.sendMessage(value.replace("%player%", player.getName()));
+                player.sendMessage(MiniMessage.miniMessage().deserialize(
+                        value.replace("%player%", player.getName()).replace("%npc%", npc.getId())));
             }
         }
     }

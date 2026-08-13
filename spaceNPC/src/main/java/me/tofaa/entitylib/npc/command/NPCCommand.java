@@ -19,11 +19,13 @@ import me.tofaa.entitylib.npc.NPCMovement;
 import me.tofaa.entitylib.npc.NPCOptions;
 import me.tofaa.entitylib.npc.NPCRegistry;
 import me.tofaa.entitylib.npc.interactions.InteractionAction;
+import me.tofaa.entitylib.npc.interactions.InteractionHandler;
 import me.tofaa.entitylib.npc.interactions.InteractionType;
 import me.tofaa.entitylib.npc.path.NPCPath;
 import me.tofaa.entitylib.npc.skin.NPCSkin;
 import me.tofaa.entitylib.npc.storage.NPCStorage;
 import me.tofaa.entitylib.wrapper.WrapperLivingEntity;
+import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -1451,443 +1453,692 @@ public class NPCCommand extends CommandSystem.BaseCommand {
         }
     }
 
+    // ===== INTERACTION =====
     public class Interaction extends CommandSystem.SubCommand {
 
+        private static final String USAGE_HINT =
+            "<gray>Use <white>/spacenpc interaction <id> help <gray>for all options";
+
         Interaction() {
-            super("interaction", "spacenpcs.admin", "interact");
-            setArgs(3, Integer.MAX_VALUE);
+            super("interaction", "spacenpcs.admin", "interact", "interactions");
+            setArgs(1, Integer.MAX_VALUE);
         }
 
         @Override
         public boolean execute(CommandSender sender, CommandSystem.Args args) {
             String id = args.get(0);
-            String actionStr = args.get(1).toLowerCase();
-
             NPC npc = NPCCommand.this.getNPC(id, sender);
             if (npc == null) return true;
 
+            String action = args.get(1, "list").toLowerCase();
+
+            switch (action) {
+                case "list":
+                case "show":
+                    return list(sender, npc, args.get(2));
+                case "add":
+                case "append":
+                    return add(sender, npc, args);
+                case "insert":
+                    return insert(sender, npc, args);
+                case "set":
+                case "edit":
+                case "replace":
+                    return set(sender, npc, args);
+                case "remove":
+                case "delete":
+                case "del":
+                    return remove(sender, npc, args);
+                case "clear":
+                case "reset":
+                    return clear(sender, npc, args.get(2));
+                case "test":
+                case "preview":
+                case "run":
+                    return test(sender, npc, args.get(2));
+                case "help":
+                    return help(sender, npc);
+                default:
+                    sender.sendMessage(
+                        mm("<red>Unknown action: <yellow>" + action)
+                    );
+                    sender.sendMessage(mm(USAGE_HINT));
+                    return true;
+            }
+        }
+
+        // ===== ACTIONS =====
+
+        private boolean list(
+            CommandSender sender,
+            NPC npc,
+            String typeFilter
+        ) {
+            InteractionType only = null;
+            if (typeFilter != null) {
+                only = InteractionType.fromString(typeFilter);
+                if (only == null) return invalidType(sender, typeFilter);
+            }
+
             NPCOptions opts = npc.getOptions();
-
-            if (actionStr.equals("list")) {
-                sender.sendMessage(
-                    mm(
-                        "<gold><bold>=== Interactions for NPC '<yellow>" +
-                            id +
-                            "<gold>' ==="
-                    )
-                );
-                boolean hasAny = false;
-                for (InteractionType type : InteractionType.values()) {
-                    List<InteractionAction> actions = opts.getInteractions(
-                        type
-                    );
-                    if (actions != null && !actions.isEmpty()) {
-                        hasAny = true;
-                        sender.sendMessage(
-                            mm("<yellow>" + type.name().toLowerCase() + ":")
-                        );
-                        for (int i = 0; i < actions.size(); i++) {
-                            InteractionAction action = actions.get(i);
-                            if (action != null) {
-                                sender.sendMessage(
-                                    mm(
-                                        "  <white>[" +
-                                            i +
-                                            "] <gray>" +
-                                            action.getActionType() +
-                                            " <white>" +
-                                            action.getValue()
-                                    )
-                                );
-                            }
-                        }
-                    }
-                }
-                if (!hasAny) {
-                    sender.sendMessage(mm("<gray>No interactions set"));
-                }
-                sender.sendMessage(
-                    mm(
-                        "<gray>Use <white>/spacenpc interact <id> <type> add <action> <value> <gray>to add more"
-                    )
-                );
-                return true;
-            }
-
-            if (args.length() < 3) {
-                sender.sendMessage(
-                    mm(
-                        "<red>Usage: <yellow>/spacenpc interact <id> <type> <add|remove|clear|list> [args]"
-                    )
-                );
-                sender.sendMessage(
-                    mm(
-                        "<gray>Types: <white>right_click, left_click, shift_right_click, shift_left_click"
-                    )
-                );
-                sender.sendMessage(
-                    mm(
-                        "<gray>Example: <white>/spacenpc interact mynpc right_click add run_command /say Hello %player%!"
-                    )
-                );
-                return true;
-            }
-
-            String interactionTypeStr = args.get(2).toLowerCase();
-            InteractionType interactionType = InteractionType.fromString(
-                interactionTypeStr
-            );
-            if (interactionType == null) {
-                sender.sendMessage(
-                    mm(
-                        "<red>Invalid interaction type: <yellow>" +
-                            interactionTypeStr
-                    )
-                );
-                sender.sendMessage(
-                    mm(
-                        "<gray>Valid types: <white>right_click, left_click, shift_right_click, shift_left_click"
-                    )
-                );
-                return true;
-            }
-
-            if (actionStr.equals("add")) {
-                if (args.length() < 5) {
-                    sender.sendMessage(
-                        mm(
-                            "<red>Usage: <yellow>/spacenpc interact <id> <type> add <action> <value>"
-                        )
-                    );
-                    sender.sendMessage(
-                        mm("<gray>Actions: <white>run_command, run_command_player, player_chat, message")
-                    );
-                    sender.sendMessage(
-                        mm(
-                            "<gray>Example: <white>/spacenpc interact mynpc right_click add run_command /say Hello"
-                        )
-                    );
-                    return true;
-                }
-
-                String actionTypeStr = args.get(3).toLowerCase();
-                String value = args.join(4);
-                String valueWithoutSlash = value.startsWith("/")
-                    ? value.substring(1)
-                    : value;
-
-                if (
-                    actionTypeStr.equals("run_command") ||
-                    actionTypeStr.equals("cmd") ||
-                    actionTypeStr.equals("command")
-                ) {
-                    InteractionAction action = new InteractionAction(
-                        interactionType,
-                        InteractionAction.RUN_COMMAND,
-                        valueWithoutSlash
-                    );
-                    opts.addInteraction(interactionType, action);
-                    storage.saveNPC(npc);
-                    List<InteractionAction> actions = opts.getInteractions(
-                        interactionType
-                    );
-                    sender.sendMessage(
-                        mm(
-                            "<green>Added command to <yellow>" +
-                                interactionType.name().toLowerCase() +
-                                "<green>: <white>/" +
-                                valueWithoutSlash
-                        )
-                    );
-                    sender.sendMessage(
-                        mm(
-                            "<gray>Total actions for " +
-                                interactionType.name().toLowerCase() +
-                                ": <white>" +
-                                actions.size()
-                        )
-                    );
-                } else if (
-                    actionTypeStr.equals("run_command_player") ||
-                    actionTypeStr.equals("player_cmd") ||
-                    actionTypeStr.equals("player_command")
-                ) {
-                    InteractionAction action = new InteractionAction(
-                        interactionType,
-                        InteractionAction.RUN_COMMAND_PLAYER,
-                        valueWithoutSlash
-                    );
-                    opts.addInteraction(interactionType, action);
-                    storage.saveNPC(npc);
-                    List<InteractionAction> actions = opts.getInteractions(
-                        interactionType
-                    );
-                    sender.sendMessage(
-                        mm(
-                            "<green>Added player command to <yellow>" +
-                                interactionType.name().toLowerCase() +
-                                "<green>: <white>/" +
-                                valueWithoutSlash
-                        )
-                    );
-                    sender.sendMessage(
-                        mm(
-                            "<gray>Total actions for " +
-                                interactionType.name().toLowerCase() +
-                                ": <white>" +
-                                actions.size()
-                        )
-                    );
-                } else if (
-                    actionTypeStr.equals("player_chat") ||
-                    actionTypeStr.equals("chat")
-                ) {
-                    InteractionAction action = new InteractionAction(
-                        interactionType,
-                        InteractionAction.PLAYER_CHAT,
-                        value
-                    );
-                    opts.addInteraction(interactionType, action);
-                    storage.saveNPC(npc);
-                    List<InteractionAction> actions = opts.getInteractions(
-                        interactionType
-                    );
-                    sender.sendMessage(
-                        mm(
-                            "<green>Added player chat to <yellow>" +
-                                interactionType.name().toLowerCase() +
-                                "<green>: <white>" +
-                                value
-                        )
-                    );
-                    sender.sendMessage(
-                        mm(
-                            "<gray>Total actions for " +
-                                interactionType.name().toLowerCase() +
-                                ": <white>" +
-                                actions.size()
-                        )
-                    );
-                } else if (
-                    actionTypeStr.equals("message") ||
-                    actionTypeStr.equals("msg") ||
-                    actionTypeStr.equals("say")
-                ) {
-                    InteractionAction action = new InteractionAction(
-                        interactionType,
-                        InteractionAction.MESSAGE,
-                        value
-                    );
-                    opts.addInteraction(interactionType, action);
-                    storage.saveNPC(npc);
-                    List<InteractionAction> actions = opts.getInteractions(
-                        interactionType
-                    );
-                    sender.sendMessage(
-                        mm(
-                            "<green>Added message to <yellow>" +
-                                interactionType.name().toLowerCase() +
-                                "<green>: <white>" +
-                                value
-                        )
-                    );
-                    sender.sendMessage(
-                        mm(
-                            "<gray>Total actions for " +
-                                interactionType.name().toLowerCase() +
-                                ": <white>" +
-                                actions.size()
-                        )
-                    );
-                } else {
-                    sender.sendMessage(
-                        mm("<red>Unknown action type: <yellow>" + actionTypeStr)
-                    );
-                    sender.sendMessage(
-                        mm("<gray>Actions: <white>run_command, run_command_player, player_chat, message")
-                    );
-                }
-                return true;
-            }
-
-            if (actionStr.equals("remove") || actionStr.equals("delete")) {
-                if (args.length() < 4) {
-                    sender.sendMessage(
-                        mm(
-                            "<red>Usage: <yellow>/spacenpc interact <id> <type> remove <index>"
-                        )
-                    );
-                    List<InteractionAction> actions = opts.getInteractions(
-                        interactionType
-                    );
-                    if (!actions.isEmpty()) {
-                        sender.sendMessage(
-                            mm(
-                                "<gray>Available indices for <white>" +
-                                    interactionType.name().toLowerCase() +
-                                    "<gray>:"
-                            )
-                        );
-                        for (int i = 0; i < actions.size(); i++) {
-                            InteractionAction action = actions.get(i);
-                            sender.sendMessage(
-                                mm(
-                                    "  <white>[" +
-                                        i +
-                                        "] <gray>" +
-                                        action.getActionType() +
-                                        " <white>" +
-                                        action.getValue()
-                                )
-                            );
-                        }
-                    }
-                    return true;
-                }
-
-                String indexStr = args.get(3);
-                int index;
-                try {
-                    index = Integer.parseInt(indexStr);
-                } catch (NumberFormatException e) {
-                    sender.sendMessage(
-                        mm("<red>Invalid index: <yellow>" + indexStr)
-                    );
-                    return true;
-                }
-
-                List<InteractionAction> actions = opts.getInteractions(
-                    interactionType
-                );
-                if (index < 0 || index >= actions.size()) {
-                    sender.sendMessage(
-                        mm(
-                            "<red>Index out of bounds. Valid range: <yellow>0-" +
-                                (actions.size() - 1)
-                        )
-                    );
-                    return true;
-                }
-
-                InteractionAction removed = actions.get(index);
-                opts.removeInteraction(interactionType, index);
-                storage.saveNPC(npc);
-                sender.sendMessage(
-                    mm(
-                        "<green>Removed action <white>[" +
-                            index +
-                            "] <gray>" +
-                            removed.getActionType() +
-                            " <white>" +
-                            removed.getValue()
-                    )
-                );
-                sender.sendMessage(
-                    mm(
-                        "<green> from <yellow>" +
-                            interactionType.name().toLowerCase()
-                    )
-                );
-                return true;
-            }
-
-            if (actionStr.equals("clear") || actionStr.equals("reset")) {
-                opts.clearInteractions(interactionType);
-                storage.saveNPC(npc);
-                sender.sendMessage(
-                    mm(
-                        "<green>Cleared all actions for <yellow>" +
-                            interactionType.name().toLowerCase()
-                    )
-                );
-                return true;
-            }
-
-            sender.sendMessage(mm("<red>Unknown action: <yellow>" + actionStr));
             sender.sendMessage(
-                mm("<gray>Actions: <white>add, remove, clear, list")
+                mm("<gold><bold>Interactions <dark_gray>| <yellow>" + npc.getId())
+            );
+
+            boolean any = false;
+            for (InteractionType type : InteractionType.values()) {
+                if (only != null && type != only) continue;
+                List<InteractionAction> actions = opts.getInteractions(type);
+                if (actions.isEmpty()) continue;
+
+                any = true;
+                sender.sendMessage(
+                    mm(
+                        "<yellow>" +
+                            type.name().toLowerCase() +
+                            " <dark_gray>(" +
+                            actions.size() +
+                            ")"
+                    )
+                );
+                for (int i = 0; i < actions.size(); i++) {
+                    InteractionAction action = actions.get(i);
+                    if (action == null) continue;
+                    sender.sendMessage(
+                        mm(
+                            "<dark_gray> [<white>" +
+                                i +
+                                "<dark_gray>] <aqua>" +
+                                action.getActionType().toLowerCase() +
+                                " <gray>" +
+                                MiniMessage.miniMessage().escapeTags(action.getValue())
+                        )
+                    );
+                }
+            }
+
+            if (!any) {
+                sender.sendMessage(mm("<gray>Nothing set yet."));
+                sender.sendMessage(
+                    mm(
+                        "<gray>Try <white>/spacenpc interaction " +
+                            npc.getId() +
+                            " add right_click <red>Hello %player%!"
+                    )
+                );
+            } else {
+                sender.sendMessage(mm(USAGE_HINT));
+            }
+            return true;
+        }
+
+        private boolean add(
+            CommandSender sender,
+            NPC npc,
+            CommandSystem.Args args
+        ) {
+            List<InteractionType> types = parseTypes(sender, args.get(2));
+            if (types == null) return true;
+
+            InteractionAction template = parseAction(sender, args, 3);
+            if (template == null) return true;
+
+            NPCOptions opts = npc.getOptions();
+            for (InteractionType type : types) {
+                List<InteractionAction> actions = opts
+                    .getAllInteractions()
+                    .computeIfAbsent(type, k -> new ArrayList<>());
+                actions.add(
+                    new InteractionAction(
+                        type,
+                        template.getActionType(),
+                        template.getValue()
+                    )
+                );
+                sender.sendMessage(
+                    mm(
+                        "<green>Added <aqua>" +
+                            template.getActionType().toLowerCase() +
+                            " <green>to <yellow>" +
+                            type.name().toLowerCase() +
+                            " <dark_gray>[<white>" +
+                            (actions.size() - 1) +
+                            "<dark_gray>]"
+                    )
+                );
+            }
+            storage.saveNPC(npc);
+            preview(sender, template);
+            return true;
+        }
+
+        private boolean insert(
+            CommandSender sender,
+            NPC npc,
+            CommandSystem.Args args
+        ) {
+            InteractionType type = parseType(sender, args.get(2));
+            if (type == null) return true;
+
+            NPCOptions opts = npc.getOptions();
+            List<InteractionAction> actions = opts
+                .getAllInteractions()
+                .computeIfAbsent(type, k -> new ArrayList<>());
+
+            int index = parseIndex(sender, args.get(3), actions.size());
+            if (index < 0) return true;
+
+            InteractionAction action = parseAction(sender, args, 4);
+            if (action == null) return true;
+
+            action.setType(type);
+            actions.add(Math.min(index, actions.size()), action);
+            storage.saveNPC(npc);
+
+            sender.sendMessage(
+                mm(
+                    "<green>Inserted <aqua>" +
+                        action.getActionType().toLowerCase() +
+                        " <green>at <yellow>" +
+                        type.name().toLowerCase() +
+                        " <dark_gray>[<white>" +
+                        index +
+                        "<dark_gray>]"
+                )
+            );
+            preview(sender, action);
+            return true;
+        }
+
+        private boolean set(
+            CommandSender sender,
+            NPC npc,
+            CommandSystem.Args args
+        ) {
+            InteractionType type = parseType(sender, args.get(2));
+            if (type == null) return true;
+
+            List<InteractionAction> actions = npc
+                .getOptions()
+                .getInteractions(type);
+            if (actions.isEmpty()) {
+                sender.sendMessage(
+                    mm(
+                        "<red>No actions on <yellow>" +
+                            type.name().toLowerCase()
+                    )
+                );
+                return true;
+            }
+
+            int index = parseIndex(sender, args.get(3), actions.size() - 1);
+            if (index < 0) return true;
+
+            InteractionAction action = parseAction(sender, args, 4);
+            if (action == null) return true;
+
+            action.setType(type);
+            actions.set(index, action);
+            storage.saveNPC(npc);
+
+            sender.sendMessage(
+                mm(
+                    "<green>Replaced <yellow>" +
+                        type.name().toLowerCase() +
+                        " <dark_gray>[<white>" +
+                        index +
+                        "<dark_gray>] <green>with <aqua>" +
+                        action.getActionType().toLowerCase()
+                )
+            );
+            preview(sender, action);
+            return true;
+        }
+
+        private boolean remove(
+            CommandSender sender,
+            NPC npc,
+            CommandSystem.Args args
+        ) {
+            InteractionType type = parseType(sender, args.get(2));
+            if (type == null) return true;
+
+            NPCOptions opts = npc.getOptions();
+            List<InteractionAction> actions = opts.getInteractions(type);
+            if (actions.isEmpty()) {
+                sender.sendMessage(
+                    mm(
+                        "<red>No actions on <yellow>" +
+                            type.name().toLowerCase()
+                    )
+                );
+                return true;
+            }
+
+            if (!args.has(3)) {
+                sender.sendMessage(
+                    mm(
+                        "<red>Usage: <yellow>/spacenpc interaction " +
+                            npc.getId() +
+                            " remove " +
+                            type.name().toLowerCase() +
+                            " <index>"
+                    )
+                );
+                return list(sender, npc, type.name());
+            }
+
+            int index = parseIndex(sender, args.get(3), actions.size() - 1);
+            if (index < 0) return true;
+
+            InteractionAction removed = actions.get(index);
+            opts.removeInteraction(type, index);
+            storage.saveNPC(npc);
+
+            sender.sendMessage(
+                mm(
+                    "<green>Removed <yellow>" +
+                        type.name().toLowerCase() +
+                        " <dark_gray>[<white>" +
+                        index +
+                        "<dark_gray>] <aqua>" +
+                        removed.getActionType().toLowerCase() +
+                        " <gray>" +
+                        MiniMessage.miniMessage().escapeTags(removed.getValue())
+                )
             );
             return true;
         }
+
+        private boolean clear(CommandSender sender, NPC npc, String typeStr) {
+            NPCOptions opts = npc.getOptions();
+
+            if (typeStr == null) {
+                int total = 0;
+                for (List<InteractionAction> actions : opts
+                    .getAllInteractions()
+                    .values()) {
+                    total += actions.size();
+                }
+                opts.clearAllInteractions();
+                storage.saveNPC(npc);
+                sender.sendMessage(
+                    mm(
+                        "<green>Cleared <yellow>" +
+                            total +
+                            " <green>action(s) on <yellow>" +
+                            npc.getId()
+                    )
+                );
+                return true;
+            }
+
+            InteractionType type = parseType(sender, typeStr);
+            if (type == null) return true;
+
+            int count = opts.getInteractions(type).size();
+            opts.clearInteractions(type);
+            storage.saveNPC(npc);
+            sender.sendMessage(
+                mm(
+                    "<green>Cleared <yellow>" +
+                        count +
+                        " <green>action(s) on <yellow>" +
+                        type.name().toLowerCase()
+                )
+            );
+            return true;
+        }
+
+        private boolean test(CommandSender sender, NPC npc, String typeStr) {
+            if (!(sender instanceof Player)) {
+                sender.sendMessage(
+                    mm("<red>Only players can test interactions")
+                );
+                return true;
+            }
+
+            InteractionType type = typeStr == null
+                ? InteractionType.RIGHT_CLICK
+                : parseType(sender, typeStr);
+            if (type == null) return true;
+
+            sender.sendMessage(
+                mm(
+                    "<gray>Running <yellow>" +
+                        type.name().toLowerCase() +
+                        " <gray>on <yellow>" +
+                        npc.getId() +
+                        " <gray>(commands included)"
+                )
+            );
+            InteractionHandler.handleInteraction(npc, (Player) sender, type);
+            return true;
+        }
+
+        private boolean help(CommandSender sender, NPC npc) {
+            String id = npc.getId();
+            sender.sendMessage(
+                mm("<gold><bold>Interactions <dark_gray>| <yellow>" + id)
+            );
+            sender.sendMessage(
+                mm(
+                    "<yellow>/spacenpc interaction " +
+                        id +
+                        " add <type> [action] <value>"
+                )
+            );
+            sender.sendMessage(
+                mm("<gray>  action defaults to <white>message<gray> when omitted")
+            );
+            sender.sendMessage(
+                mm(
+                    "<gray>  types: <white>right_click, left_click, shift_right_click, shift_left_click, any"
+                )
+            );
+            sender.sendMessage(
+                mm(
+                    "<gray>  several at once: <white>left_click,right_click"
+                )
+            );
+            sender.sendMessage(
+                mm(
+                    "<gray>  actions: <white>message, run_command, run_command_player, player_chat"
+                )
+            );
+            sender.sendMessage(
+                mm(
+                    "<gray>  messages use MiniMessage: <white><red>hi <gray>and <white>\\n <gray>for a new line"
+                )
+            );
+            sender.sendMessage(
+                mm("<gray>  placeholders: <white>%player%<gray>, <white>%npc%")
+            );
+            sender.sendMessage(mm("<yellow>Other actions:"));
+            sender.sendMessage(
+                mm("<gray>  <white>list [type] <gray>- show what is set")
+            );
+            sender.sendMessage(
+                mm(
+                    "<gray>  <white>insert <type> <index> [action] <value> <gray>- add in the middle"
+                )
+            );
+            sender.sendMessage(
+                mm(
+                    "<gray>  <white>set <type> <index> [action] <value> <gray>- rewrite one entry"
+                )
+            );
+            sender.sendMessage(
+                mm("<gray>  <white>remove <type> <index> <gray>- delete one entry")
+            );
+            sender.sendMessage(
+                mm(
+                    "<gray>  <white>clear [type] <gray>- wipe a type, or everything"
+                )
+            );
+            sender.sendMessage(
+                mm("<gray>  <white>test [type] <gray>- fire it on yourself")
+            );
+            sender.sendMessage(
+                mm(
+                    "<dark_gray>Example: <white>/spacenpc interaction " +
+                        id +
+                        " add left_click <red>Line one\\n<gray>Line two"
+                )
+            );
+            return true;
+        }
+
+        // ===== PARSING =====
+
+        private InteractionType parseType(CommandSender sender, String raw) {
+            if (raw == null) {
+                sender.sendMessage(mm("<red>Missing interaction type"));
+                sender.sendMessage(
+                    mm(
+                        "<gray>Types: <white>right_click, left_click, shift_right_click, shift_left_click, any"
+                    )
+                );
+                return null;
+            }
+            InteractionType type = InteractionType.fromString(raw);
+            if (type == null) {
+                invalidType(sender, raw);
+                return null;
+            }
+            return type;
+        }
+
+        private List<InteractionType> parseTypes(
+            CommandSender sender,
+            String raw
+        ) {
+            if (raw == null) {
+                parseType(sender, null);
+                return null;
+            }
+            List<InteractionType> types = new ArrayList<>();
+            for (String part : raw.split(",")) {
+                if (part.isEmpty()) continue;
+                InteractionType type = InteractionType.fromString(part);
+                if (type == null) {
+                    invalidType(sender, part);
+                    return null;
+                }
+                if (!types.contains(type)) types.add(type);
+            }
+            if (types.isEmpty()) {
+                parseType(sender, null);
+                return null;
+            }
+            return types;
+        }
+
+        private boolean invalidType(CommandSender sender, String raw) {
+            sender.sendMessage(mm("<red>Unknown type: <yellow>" + raw));
+            sender.sendMessage(
+                mm(
+                    "<gray>Types: <white>right_click, left_click, shift_right_click, shift_left_click, any"
+                )
+            );
+            return true;
+        }
+
+        private int parseIndex(CommandSender sender, String raw, int max) {
+            if (raw == null) {
+                sender.sendMessage(mm("<red>Missing index"));
+                return -1;
+            }
+            int index;
+            try {
+                index = Integer.parseInt(raw);
+            } catch (NumberFormatException e) {
+                sender.sendMessage(mm("<red>Not a number: <yellow>" + raw));
+                return -1;
+            }
+            if (index < 0 || index > max) {
+                sender.sendMessage(
+                    mm("<red>Index must be between <yellow>0 <red>and <yellow>" + max)
+                );
+                return -1;
+            }
+            return index;
+        }
+
+        /**
+         * Reads an optional action type followed by the rest of the arguments as
+         * its value. When the token at {@code start} is not a known action type the
+         * whole remainder is treated as a message, so
+         * {@code add right_click <red>Hi} works without spelling out "message".
+         */
+        private InteractionAction parseAction(
+            CommandSender sender,
+            CommandSystem.Args args,
+            int start
+        ) {
+            String actionType = actionTypeOf(args.get(start));
+            String value = actionType == null
+                ? args.join(start)
+                : args.join(start + 1);
+
+            if (actionType == null) actionType = InteractionAction.MESSAGE;
+
+            if (value.isEmpty()) {
+                sender.sendMessage(
+                    mm(
+                        "<red>Missing value for <yellow>" +
+                            actionType.toLowerCase()
+                    )
+                );
+                return null;
+            }
+
+            if (
+                InteractionAction.RUN_COMMAND.equals(actionType) ||
+                InteractionAction.RUN_COMMAND_PLAYER.equals(actionType)
+            ) {
+                if (value.startsWith("/")) value = value.substring(1);
+            } else if (InteractionAction.MESSAGE.equals(actionType)) {
+                value = value.replace("\\n", "<newline>");
+                if (!isValidMiniMessage(sender, value)) return null;
+            }
+
+            return new InteractionAction(null, actionType, value);
+        }
+
+        private String actionTypeOf(String raw) {
+            if (raw == null) return null;
+            switch (raw.toLowerCase()) {
+                case "message":
+                case "msg":
+                case "say":
+                    return InteractionAction.MESSAGE;
+                case "run_command":
+                case "command":
+                case "cmd":
+                case "console":
+                    return InteractionAction.RUN_COMMAND;
+                case "run_command_player":
+                case "player_command":
+                case "player_cmd":
+                    return InteractionAction.RUN_COMMAND_PLAYER;
+                case "player_chat":
+                case "chat":
+                    return InteractionAction.PLAYER_CHAT;
+                default:
+                    return null;
+            }
+        }
+
+        private boolean isValidMiniMessage(CommandSender sender, String value) {
+            try {
+                MiniMessage.miniMessage().deserialize(value);
+                return true;
+            } catch (RuntimeException e) {
+                sender.sendMessage(
+                    mm("<red>Invalid MiniMessage: <yellow>" + e.getMessage())
+                );
+                return false;
+            }
+        }
+
+        private void preview(CommandSender sender, InteractionAction action) {
+            if (!InteractionAction.MESSAGE.equals(action.getActionType())) {
+                return;
+            }
+            sender.sendMessage(mm("<dark_gray>Preview:"));
+            sender.sendMessage(
+                MiniMessage.miniMessage()
+                    .deserialize(
+                        action.getValue().replace("%player%", sender.getName())
+                    )
+            );
+        }
+
+        // ===== TAB COMPLETE =====
 
         @Override
         public List<String> tabComplete(
             CommandSender sender,
             CommandSystem.Args args
         ) {
-            if (args.length() == 1) {
+            int length = args.length();
+
+            if (length <= 1) {
                 return NPCRegistry.getAll()
                     .stream()
                     .map(NPC::getId)
-                    .filter(id ->
-                        id
-                            .toLowerCase()
-                            .startsWith(args.get(0, "").toLowerCase())
-                    )
                     .collect(Collectors.toList());
-            } else if (args.length() == 2) {
-                List<String> actions = Lists.newArrayList(
+            }
+
+            if (length == 2) {
+                return Lists.newArrayList(
                     "add",
+                    "list",
+                    "insert",
+                    "set",
                     "remove",
                     "clear",
-                    "list"
+                    "test",
+                    "help"
                 );
-                return actions
-                    .stream()
-                    .filter(a -> a.startsWith(args.get(1, "").toLowerCase()))
-                    .collect(Collectors.toList());
-            } else if (args.length() == 3) {
-                List<String> types = Lists.newArrayList(
-                    "right_click",
-                    "left_click",
-                    "shift_right_click",
-                    "shift_left_click",
-                    "any"
-                );
-                return types
-                    .stream()
-                    .filter(t -> t.startsWith(args.get(2, "").toLowerCase()))
-                    .collect(Collectors.toList());
-            } else if (args.length() == 4) {
-                String action = args.get(1);
-                if (action.equals("add")) {
-                    List<String> actionTypes = Lists.newArrayList(
-                        "run_command",
-                        "run_command_player",
-                        "player_chat",
-                        "message"
-                    );
-                    return actionTypes
-                        .stream()
-                        .filter(a ->
-                            a.startsWith(args.get(3, "").toLowerCase())
-                        )
-                        .collect(Collectors.toList());
-                } else if (action.equals("remove")) {
-                    String id = args.get(0);
-                    String typeStr = args.get(2);
-                    NPC npc = NPCRegistry.get(id);
-                    if (npc != null) {
-                        InteractionType type = InteractionType.fromString(
-                            typeStr
-                        );
-                        if (type != null) {
-                            List<InteractionAction> actions = npc
-                                .getOptions()
-                                .getInteractions(type);
-                            List<String> indices = new ArrayList<>();
-                            for (int i = 0; i < actions.size(); i++) {
-                                indices.add(String.valueOf(i));
-                            }
-                            return indices
-                                .stream()
-                                .filter(idx -> idx.startsWith(args.get(3, "")))
-                                .collect(Collectors.toList());
-                        }
-                    }
-                }
             }
+
+            String action = args.get(1).toLowerCase();
+
+            if (length == 3) {
+                return typeNames();
+            }
+
+            if (length == 4) {
+                if (action.equals("add") || action.equals("append")) {
+                    return actionNames();
+                }
+                return indices(args.get(0), args.get(2));
+            }
+
+            if (
+                length == 5 &&
+                (action.equals("insert") ||
+                    action.equals("set") ||
+                    action.equals("edit") ||
+                    action.equals("replace"))
+            ) {
+                return actionNames();
+            }
+
             return Collections.emptyList();
+        }
+
+        private List<String> typeNames() {
+            List<String> names = new ArrayList<>();
+            for (InteractionType type : InteractionType.values()) {
+                names.add(type.name().toLowerCase());
+            }
+            return names;
+        }
+
+        private List<String> actionNames() {
+            return Lists.newArrayList(
+                "message",
+                "run_command",
+                "run_command_player",
+                "player_chat"
+            );
+        }
+
+        private List<String> indices(String id, String typeStr) {
+            NPC npc = NPCRegistry.get(id);
+            if (npc == null) return Collections.emptyList();
+            InteractionType type = InteractionType.fromString(typeStr);
+            if (type == null) return Collections.emptyList();
+
+            List<String> indices = new ArrayList<>();
+            int size = npc.getOptions().getInteractions(type).size();
+            for (int i = 0; i < size; i++) {
+                indices.add(String.valueOf(i));
+            }
+            return indices;
         }
 
         @Override
@@ -1897,7 +2148,7 @@ public class NPCCommand extends CommandSystem.BaseCommand {
 
         @Override
         public String getUsage() {
-            return "interact <id> <add|remove|clear|list> <type> [args]";
+            return "interaction <id> <add|list|insert|set|remove|clear|test> [args]";
         }
     }
 

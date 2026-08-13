@@ -33,6 +33,8 @@ import me.tofaa.entitylib.wrapper.WrapperPlayer;
 import me.tofaa.entitylib.npc.placeholder.PlaceholderAPIHook;
 import me.tofaa.entitylib.wrapper.hologram.Hologram;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextComponent;
+import net.kyori.adventure.text.format.Style;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -377,26 +379,64 @@ public class NPC {
     }
 
     /**
-     * Splits a Component into multiple lines on {@code <br>} tags.
-     * MiniMessage keeps {@code <br>} as a tag token through serialize/deserialize round-trips,
-     * so we serialize back to a MiniMessage string and split on the literal {@code <br>} token
-     * before re-deserializing each fragment into its own Component. This allows multi-line NPC
-     * name tags to be rendered as separate hologram line entities, since armor stands and text
-     * displays do not visually break a single component on newlines.
+     * Splits a Component into one Component per line, breaking on newline characters.
+     * <p>
+     * Every way of asking for a line break ends up as a newline character in the deserialized
+     * component: MiniMessage's {@code <br>} and {@code <newline>} tags both emit one, and so does
+     * a literal {@code \n} written in a config. Splitting on that character therefore covers all
+     * of them — and it is the only thing that can work, because MiniMessage does NOT round-trip
+     * {@code <br>} as a tag. {@code serialize()} writes the newline back out as a raw newline
+     * character, so splitting re-serialized text on the literal string {@code <br>} never matched
+     * and the name tag stayed one line with a stray control character in it.
+     * <p>
+     * The split carries inherited styles onto each fragment, so colours and decorations opened
+     * before the break survive it.
      */
     private List<Component> splitDisplayNameLines(Component component) {
-        MiniMessage mm = MiniMessage.miniMessage();
-        String serialized = mm.serialize(component);
-        // MiniMessage round-trips <br> as the literal tag string "<br>"
-        String[] parts = serialized.split("(?i)<br>", -1);
-        if (parts.length == 1) {
+        List<Component> lines = new ArrayList<>(3);
+        TextComponent.Builder current = splitInto(component, Style.empty(), Component.text(), lines);
+        lines.add(current.build());
+        if (lines.size() == 1) {
+            // Nothing was split — hand back the original component untouched.
             return Collections.singletonList(component);
         }
-        List<Component> lines = new ArrayList<>(parts.length);
-        for (String part : parts) {
-            lines.add(mm.deserialize(part));
-        }
         return lines;
+    }
+
+    /**
+     * Walks a component tree, appending it to {@code current} and starting a new line every time a
+     * newline character is met. Returns the builder that following content must append to.
+     */
+    private TextComponent.Builder splitInto(Component component, Style inherited,
+                                            TextComponent.Builder current, List<Component> lines) {
+        // Inherited style first, then the component's own on top: Style#merge overwrites the
+        // target with whatever the argument actually sets, so this order lets a child's colour
+        // win while still inheriting decorations opened by its parents.
+        Style style = inherited.merge(component.style());
+
+        if (component instanceof TextComponent) {
+            String content = ((TextComponent) component).content();
+            if (!content.isEmpty()) {
+                String[] parts = content.split("\n", -1);
+                for (int i = 0; i < parts.length; i++) {
+                    if (i > 0) {
+                        lines.add(current.build());
+                        current = Component.text();
+                    }
+                    if (!parts[i].isEmpty()) {
+                        current.append(Component.text(parts[i]).style(style));
+                    }
+                }
+            }
+        } else {
+            // Non-text components (translatable, keybind, score...) hold no raw newline of their own.
+            current.append(component.children(Collections.<Component>emptyList()).style(style));
+        }
+
+        for (Component child : component.children()) {
+            current = splitInto(child, style, current, lines);
+        }
+        return current;
     }
 
     private void createHologram() {

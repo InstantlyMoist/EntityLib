@@ -10,7 +10,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 final class LegacyHologram implements Hologram.Legacy {
@@ -57,6 +60,13 @@ final class LegacyHologram implements Hologram.Legacy {
         int existingCount = lines.size();
         int newCount = newLines.size();
 
+        // Lines added later must be shown to whoever is already watching this hologram: a fresh
+        // WrapperEntity has no viewers of its own, so spawning it reaches nobody and the extra
+        // lines stay invisible to every current viewer.
+        Set<UUID> inheritedViewers = existingCount > 0
+            ? new HashSet<UUID>(lines.get(0).getViewers())
+            : Collections.<UUID>emptySet();
+
         if (newCount == 0) {
             for (WrapperEntity line : lines) {
                 line.remove();
@@ -87,6 +97,9 @@ final class LegacyHologram implements Hologram.Legacy {
             meta.setMarker(marker);
             if (spawned) {
                 e.spawn(location);
+            }
+            for (UUID viewer : inheritedViewers) {
+                e.addViewer(viewer);
             }
             lines.add(e);
         }
@@ -193,10 +206,18 @@ final class LegacyHologram implements Hologram.Legacy {
         meta.setHasNoGravity(true);
         meta.setSmall(true);
         meta.setMarker(marker);
+        // Inherit the existing lines' viewers, otherwise this one is only ever visible to
+        // players who start watching after it was created.
+        Set<UUID> inheritedViewers = lines.isEmpty()
+            ? Collections.<UUID>emptySet()
+            : new HashSet<UUID>(lines.get(0).getViewers());
         Check.arrayLength(lines, index, e);
         if (spawned) {
             e.spawn(location);
             teleport(location);
+        }
+        for (UUID viewer : inheritedViewers) {
+            e.addViewer(viewer);
         }
     }
 
